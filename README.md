@@ -9,6 +9,7 @@ hard-won knowledge for building identity LoRA training datasets.
 | Path | What it does |
 |---|---|
 | `app/app.py` | Gradio web app: build a reference "bank" from photos of one person, score candidate photos against it (table, annotated boxes, CSV), collect keepers into named datasets |
+| `app/dataset_builder.py` | Identity-gated harvesting backend with framing-based crop context and auto captions |
 | `tools/face_harvest.py` | Identity-gated face-crop harvesting from photos and videos (best-match face, rotation fallback, blur/size gates, video best-of-window + dedup) |
 | `tools/bank_score.py` | Build an outlier-rejected reference bank from a folder; score images against it |
 | `tools/contact_sheet.py` | Numbered thumbnail grids for fast human review |
@@ -30,6 +31,15 @@ Open http://localhost:7861. For GPU inference install `onnxruntime-gpu` instead
 of `onnxruntime` and set `FACEMATCH_CUDA_DLLS` to a directory containing CUDA
 12 + cuDNN 9 DLLs (a torch install's `torch\lib` works). `FACEMATCH_GPU`
 selects the device (PCI bus order). CPU works out of the box, just slower.
+
+## Dataset Builder
+
+The Dataset Builder tab harvests face crops from your own photo and video collections
+for training identity LoRAs. The workflow is: build a reference bank on the Face Match
+tab → point Dataset Builder at a folder of photos/videos → pick a framing (Face/Portrait/Half body/Full person)
+→ harvest → review the scored gallery → save keepers into a named dataset with trigger-word captions.
+Captions record the framing the crop ACTUALLY achieved, not the requested one, so training sees
+the true context your dataset provides.
 
 ## Scores
 
