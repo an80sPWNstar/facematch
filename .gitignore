@@ -1,0 +1,22 @@
+# never track personal media, banks, datasets, or scores
+datasets/
+banks/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.mp4
+*.mov
+*.csv
+*.log
+
+# environments / caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.gradio/
+
+# local config with real paths/addresses
+*.local.*
+.env
