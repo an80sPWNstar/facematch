@@ -6,6 +6,11 @@ package with one scoring implementation shared by everything else, a CLI for
 scripting or driving from an agent, and the pipeline tools and hard-won
 knowledge for building identity LoRA training datasets.
 
+**An LLM/agent picking this repo up cold should read
+[`LLM_instructions.md`](LLM_instructions.md) first** -- it has the exact
+commands, the JSON schema, and (most important) how to read a score against
+a reference bank's ceiling instead of against 1.0.
+
 ## Package layout
 
 ```
