@@ -9,6 +9,8 @@ banks/
 *.mov
 *.csv
 *.log
+checkpoint_scores.json
+*.bak.*
 
 # environments / caches
 .venv/
