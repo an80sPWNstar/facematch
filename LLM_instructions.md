@@ -45,7 +45,16 @@ Key meanings:
 | `rows[].second_best` | next-best face, if more than one. Non-null = another person in frame |
 | `rows[].n_faces` | faces detected |
 | `rows[].faces[].bbox` | `[x1, y1, x2, y2]` |
-| `rows[].frame` | present instead of `file` when the target was a video |
+| `rows[].frame` | video only: decoded frame index |
+| `rows[].time_s` | video only: timestamp in seconds |
+
+Video targets return the same row shape plus `frame` and `time_s`. `file` is still
+present and is a synthetic name like `frame000000`:
+
+```json
+{"file": "frame000000", "best": 0.6002532243728638, "second_best": null,
+ "n_faces": 1, "faces": [...], "frame": 0, "time_s": 0.0}
+```
 
 ## How to read the numbers — read this before reporting anything
 
