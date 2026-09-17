@@ -1,127 +1,119 @@
-# FaceMatch -- instructions for an LLM/agent
+# FaceMatch — instructions for an LLM / agent
 
-## 1. What this does
+You are looking at a face-similarity toolkit. It answers one question: **does this
+generated image or video actually look like my reference person?** It uses ArcFace
+(InsightFace `buffalo_l`) and cosine similarity on L2-normalised embeddings.
 
-ArcFace face-similarity scoring: does this generated image/video look like my
-reference person? You give it a folder of trusted photos of one person (the
-"reference bank") and a folder/video/glob to check; it returns a cosine
-similarity per detected face.
+## The fastest path
 
-## 2. Fastest path
-
-```
-python -m facematch score --refs ./refs/alice --targets ./output/run3 --json
+```bash
+python -m facematch score --refs <folder-of-reference-photos> --targets <folder|video|glob> --json
 ```
 
-`--targets` can be a folder, a single video file, or a glob (mixed
-image/video globs work). `--json` writes exactly one JSON object to stdout
-and nothing else there -- all progress goes to stderr, so it is always safe
-to `json.loads(stdout)` directly. Exact shape:
+`--json` puts **exactly one JSON document on stdout and nothing else**. All progress and
+library chatter goes to stderr. Pipe stdout straight into a parser.
+
+Real output, trimmed:
 
 ```json
 {
-  "bank": {"n": 42, "of": 45, "dropped": 3, "self_mean": 0.842, "self_min": 0.611},
+  "bank": {"n": 20, "of": 20, "dropped": 0,
+           "self_mean": 0.9105117917060852, "self_min": 0.7195218801498413},
   "rows": [
-    {"file": "img001.jpg", "best": 0.71, "second_best": null, "n_faces": 1,
-     "faces": [{"bbox": [120.0, 40.0, 340.0, 300.0], "sim": 0.71}]},
-    {"file": "img002.jpg", "best": null, "second_best": null, "n_faces": 0, "faces": []}
+    {"file": "f01.png", "best": 0.4707188010215759, "second_best": null, "n_faces": 1,
+     "faces": [{"bbox": [510.4, 170.5, 611.1, 305.5], "sim": 0.4707188010215759}]},
+    {"file": "f08.png", "best": null, "second_best": null, "n_faces": 0, "faces": []}
   ]
 }
 ```
 
-For a video target, each row also has `"frame"` (int index) and `"time_s"`
-(float). `python -m facematch bank --refs ./refs/alice --json` returns just
-`{"stats": {...}}` in the same shape as `bank` above -- use it to sanity
-check a reference set before spending time scoring anything against it.
+Bank stats only:
 
-## 3. How to read the numbers -- read this before reporting anything
+```bash
+python -m facematch bank --refs <folder> --json
+# {"stats": {"n": 5, "of": 5, "dropped": 0, "self_mean": 0.923, "self_min": 0.896}}
+```
 
-- Scores are cosine similarity on L2-normalised ArcFace embeddings. Range is
-  roughly -1..1 in theory; real faces cluster in 0.0-0.9.
-- `>0.40` is the conventional "same person" floor for buffalo_l. But:
-- **A raw score means nothing without the reference bank's own ceiling.**
-  `bank.self_mean` is how similar the reference photos are to *each other* --
-  that's the best any candidate could realistically score. A good reference
-  set has `self_mean` around 0.85-0.87. Against that ceiling, 0.63 is a
-  strong match and 0.23 is a clear failure -- but a 0.63 against a shaky
-  0.70-ceiling bank is a much weaker result. **Always fetch/print
-  `bank.self_mean` and `bank.self_min` alongside every score you report.**
-  If you have a second reference set (e.g. a held-out batch of the same
-  person), also compute a holdout-vs-train ceiling before judging anything
-  (snippet in section 5) -- that number, not 1.0, is the realistic best case.
-- For a video or a multi-frame batch, report **both the mean and the max**
-  across frames/rows. A single lucky frame does not mean the clip is good;
-  a single bad frame does not mean it's ruined. Both numbers, always.
-- A low score can mean bad framing -- small face, turned away, occluded,
-  motion blur -- rather than bad likeness. Check `faces[].bbox` size and
-  `n_faces` before concluding "this doesn't look like them." A `best: null`
-  row (no face detected) is not a low score; don't average it in as 0.
+Key meanings:
 
-## 4. What not to do
+| key | meaning |
+|---|---|
+| `bank.n` / `bank.of` | reference faces kept / usable images found |
+| `bank.dropped` | references rejected as outliers (a wrong person in the folder) |
+| `bank.self_mean` | how tightly the reference set agrees with itself — **the ceiling** |
+| `rows[].best` | best-matching face in that image. `null` means **no face detected** |
+| `rows[].second_best` | next-best face, if more than one. Non-null = another person in frame |
+| `rows[].n_faces` | faces detected |
+| `rows[].faces[].bbox` | `[x1, y1, x2, y2]` |
+| `rows[].frame` | present instead of `file` when the target was a video |
 
-- **Do not eyeball an image and decide it "looks like" the reference.**
-  That subjective judgment is the exact failure mode this package exists to
-  replace. Always run the scorer and report the number plus the ceiling.
-- Do not compare a score from one reference bank against a score from a
-  different bank -- the ceiling is different, so the numbers aren't
-  comparable. Rebuild/rescore against a shared bank if you need to compare.
-- Do not pass `--gpu` (or `analyzer(gpu=True)`) without checking the GPU is
-  actually free -- it will silently fall back to CPU on failure, but it can
-  still contend with a training job or another process for VRAM first.
+## How to read the numbers — read this before reporting anything
 
-## 5. Python API
+1. **A score is meaningless without the ceiling.** Always look at `bank.self_mean` first.
+   It is how well the reference photos match *each other*, and it is the practical maximum.
+   A typical good reference set sits around **0.85–0.92**. Against that ceiling, ~0.63 is a
+   strong match and ~0.23 is a failure. Never report a raw score without it.
+2. **>0.40 is the conventional "same person" line** for `buffalo_l`. Treat 0.30–0.40 as
+   uncertain, not as a pass.
+3. **Report mean AND max across frames.** One good frame does not make a good clip. A low
+   mean with a high max usually means the subject is only recognisable in part of the shot.
+4. **A low score is often bad framing, not bad likeness.** Face small in frame, turned away,
+   occluded, or motion-blurred all tank the score. Check `n_faces` and `bbox` size before
+   concluding the model failed to reproduce the identity.
+5. **`best: null` is "no face found", not "score of zero".** Exclude those from means; report
+   them separately as a detection-failure count.
+6. **`second_best` is a warning.** If it is high, another face in the frame also matches the
+   reference — the identity may be leaking onto a bystander.
+
+## What not to do
+
+- **Do not judge likeness by looking at the image and deciding.** That is the exact error this
+  tool exists to prevent — eyeballing one frame reliably picks the wrong checkpoint. Score it.
+- **Do not compare scores across different reference banks.** Scores are only comparable
+  within one bank. Changing `--refs` or `--ref-limit` changes the scale.
+- **Do not pass `--gpu` blindly.** It is CPU by default on purpose. If another job holds the
+  GPU, `--gpu` will contend with it or fail on missing CUDA DLLs.
+- **Do not parse the human-readable output.** Use `--json`.
+
+## Python API
 
 ```python
 from facematch.core import analyzer, reference_bank, score_folder, score_video
 
-app = analyzer(gpu=False)  # gpu=True tries CUDA, falls back to CPU on any failure
-mean, stats = reference_bank(app, "./refs/alice")
-print(f"ceiling: mean={stats['self_mean']:.3f} min={stats['self_min']:.3f}")
+app = analyzer(gpu=False)
+mean, stats = reference_bank(app, r"path/to/reference_photos", limit=60)
+print(stats["self_mean"])                       # the ceiling
 
-rows = score_folder(app, "./output/run3", (mean, stats))
-# or: score_video(app, "./output/clip.mp4", (mean, stats), every_n=15, max_frames=10)
+rows = score_folder(app, r"path/to/generated", (mean, stats))
+rows = score_video(app, r"clip.mp4", (mean, stats), every_n=15, max_frames=10)
 
 scored = [r["best"] for r in rows if r["best"] is not None]
-print(f"mean {sum(scored)/len(scored):.3f}  max {max(scored):.3f}  n={len(scored)}")
+print(sum(scored) / len(scored), max(scored))   # mean AND max
 ```
 
-Holdout-vs-train ceiling (the realistic best case, if you have two reference
-sets for the same person):
+Also available: `faces(app, path)`, `score_image(app, path, bank)`,
+`bank_from_paths(app, [paths])`.
 
-```python
-train_mean, train_stats = reference_bank(app, "./refs/alice_train")
-hold_mean, hold_stats = reference_bank(app, "./refs/alice_holdout")
-print(f"holdout vs train ceiling: {float(hold_mean @ train_mean):.3f}")
-```
+## Environment variables
 
-## 6. Environment variables
+| var | effect if unset |
+|---|---|
+| `FACEMATCH_GPU` | CUDA device index used when `--gpu` is passed. Defaults to `0`. |
+| `FACEMATCH_CUDA_DLLS` | directory holding CUDA/cuDNN DLLs for `onnxruntime-gpu`. Empty by default; only needed if `--gpu` fails to find them. |
 
-| Variable | Default if unset | Effect |
-|---|---|---|
-| `FACEMATCH_CUDA_DLLS` | none | CPU-only; `onnxruntime-gpu`/CUDA init is skipped entirely (`analyzer(gpu=...)` still runs, just lands on CPU). Set to a directory containing CUDA 12 + cuDNN 9 DLLs (a torch install's `...\torch\lib` works) to enable GPU. |
-| `FACEMATCH_GPU` | `"0"` | Which device index (PCI bus order) to expose when GPU is requested. Ignored on CPU. |
+Neither is required for CPU use, which is the default and needs no configuration.
 
-Nothing else needs to be set. GPU is always opt-in (`gpu=True` / `--gpu`) and
-always falls back to CPU silently on any init failure -- check stderr/the log
-for "CUDA init failed" if a run seems slower than expected, don't assume it
-crashed.
+## Troubleshooting
 
-## 7. Troubleshooting
-
-- **No faces detected in a whole folder** (`stats.n == 0`, `ValueError: no
-  usable faces found`): check the folder actually has images with visible
-  faces at a normal resolution -- buffalo_l's default detector size is
-  640x640 and struggles on tiny thumbnails or extreme close-ups that fill
-  the whole frame.
-- **`onnxruntime-gpu` / CUDA DLL failures**: this is caught internally and
-  falls back to CPU automatically -- it will not crash your run. If you
-  actually need GPU, verify `FACEMATCH_CUDA_DLLS` points at a real directory
-  containing `cudart64_*.dll`/`cudnn64_*.dll`, and that `onnxruntime-gpu` (not
-  plain `onnxruntime`) is installed in the active environment.
-- **Empty reference folder / bad `--refs` path**: `reference_bank`/`bank`
-  raises/reports zero faces rather than silently scoring against garbage --
-  treat that as a hard stop, not a 0.0 score.
-- **Video with no extractable frames**: `score_video` returns `[]` if the
-  file won't open (`cv2.VideoCapture.isOpened() == False`) -- check the
-  codec/container is one OpenCV can decode, or extract frames yourself first
-  and score them as a folder instead.
+- **`best: null` on every row** — no faces detected. The images may be too low-resolution,
+  the face too small in frame, or heavily stylised. Try larger images before concluding the
+  identity failed.
+- **Reference bank `n` much lower than `of`** — most reference photos had no detectable face.
+  Check the folder actually contains face photos.
+- **`dropped` > 0** — outliers were rejected. Usually a different person in the reference
+  folder. Inspect before trusting the bank.
+- **`onnxruntime-gpu` DLL load failure with `--gpu`** — set `FACEMATCH_CUDA_DLLS` to the
+  directory containing the CUDA/cuDNN DLLs, or drop `--gpu` and run on CPU.
+- **Video yields no rows** — the file may not be readable by OpenCV, or `--every-n` is larger
+  than the clip. Lower `--every-n`.
+- **Empty reference folder** — the command errors rather than silently scoring against nothing.

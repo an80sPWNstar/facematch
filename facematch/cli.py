@@ -6,6 +6,7 @@ agent driving this can pipe stdout straight into json.loads() without
 scraping log noise out of it first.
 """
 import argparse
+import contextlib
 import glob
 import json
 import os
@@ -17,6 +18,26 @@ from . import core
 
 def _log(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+# Where a --json payload is written. main() points this at the real stdout while
+# stdout itself is fenced off to stderr, so library chatter can never corrupt the
+# document a caller is trying to parse.
+_JSON_OUT = [sys.stdout]
+
+
+@contextlib.contextmanager
+def _json_sink(stream):
+    _JSON_OUT.append(stream)
+    try:
+        yield
+    finally:
+        _JSON_OUT.pop()
+
+
+def emit_json(obj):
+    """Write one JSON document to the real stdout and nothing else."""
+    print(json.dumps(obj), file=_JSON_OUT[-1], flush=True)
 
 
 def _targets_kind(path):
@@ -70,7 +91,7 @@ def cmd_bank(args):
     _log(f"building reference bank from {args.refs}")
     _, stats = core.reference_bank(app, args.refs, limit=args.ref_limit)
     if args.json:
-        print(json.dumps({"stats": stats}))
+        emit_json({"stats": stats})
     else:
         _print_bank_human(stats)
     return 0
@@ -84,7 +105,7 @@ def cmd_score(args):
     _log(f"scoring {args.targets}")
     rows = _score_targets(app, args.targets, (mean, stats), args.every_n, args.max_frames)
     if args.json:
-        print(json.dumps({"bank": stats, "rows": rows}))
+        emit_json({"bank": stats, "rows": rows})
     else:
         _print_bank_human(stats)
         print()
@@ -124,7 +145,21 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    if not getattr(args, "json", False):
+        return args.func(args)
+
+    # --json must put NOTHING on stdout except the JSON document, so that a
+    # caller can pipe it straight into a parser. InsightFace and onnxruntime
+    # print their own startup chatter ("Applied providers: ...", "find model:
+    # ...", "set det-size: ...") to stdout, not stderr, so fence stdout off to
+    # stderr for the whole run and emit the payload to the real stdout.
+    real_stdout = sys.stdout
+    try:
+        sys.stdout = sys.stderr
+        with _json_sink(real_stdout):
+            return args.func(args)
+    finally:
+        sys.stdout = real_stdout
 
 
 if __name__ == "__main__":
