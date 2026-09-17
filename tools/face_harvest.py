@@ -1,4 +1,4 @@
-"""face_harvest.py -- harvest training crops of ONE identity from videos and photos.
+r"""face_harvest.py -- harvest training crops of ONE identity from videos and photos.
 
 Builds an ArcFace (buffalo_l) reference embedding from a folder of real photos,
 then walks input videos/images and keeps only frames where THAT person's face:
@@ -24,24 +24,15 @@ import argparse, csv, glob, os, sys, time, warnings
 import cv2, numpy as np
 warnings.filterwarnings("ignore")
 
-VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".3gp", ".mts", ".wmv", ".mpg", ".mpeg"}
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from facematch import core
 
-
-TORCH_CUDA_DLLS = os.environ.get("FACEMATCH_CUDA_DLLS", "")
+VIDEO_EXT = core.VIDEO_EXT
+IMAGE_EXT = core.IMAGE_EXT
 
 
 def analyzer(gpu=False):
-    if gpu:
-        os.add_dll_directory(TORCH_CUDA_DLLS)
-        os.environ["PATH"] = TORCH_CUDA_DLLS + os.pathsep + os.environ.get("PATH", "")  # cuDNN is loaded by name off PATH
-        os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
-        os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
-    import insightface
-    providers = ["CUDAExecutionProvider"] if gpu else ["CPUExecutionProvider"]
-    a = insightface.app.FaceAnalysis(name="buffalo_l", providers=providers)
-    a.prepare(ctx_id=0 if gpu else -1, det_size=(640, 640))
-    return a
+    return core.analyzer(gpu)
 
 
 def load_image(p):
@@ -61,24 +52,16 @@ def load_image(p):
 
 
 def build_bank(app, folder):
-    files = []
-    for ext in ("*.jpg", "*.JPG", "*.jpeg", "*.png", "*.PNG", "*.webp"):
-        files += glob.glob(os.path.join(folder, ext))
-    embs = []
-    for p in sorted(set(files)):
-        img = load_image(p)
-        if img is None:
-            continue
-        fs = app.get(img)
-        if fs:
-            fs.sort(key=lambda f: -(f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-            embs.append(fs[0].normed_embedding)
-    if not embs:
+    """Reference mean embedding for `folder`, via facematch.core (outlier
+    rejection included -- see core.reference_bank). Returns (mean, n_kept,
+    ceiling) to match this script's original call site."""
+    try:
+        mean, stats = core.reference_bank(app, folder)
+    except ValueError:
         sys.exit(f"FATAL: no faces found in reference folder {folder}")
-    E = np.stack(embs)
-    m = E.mean(0)
-    m /= np.linalg.norm(m)
-    return m, len(embs), float((E @ m).mean())
+    if stats["dropped"]:
+        print(f"REFERENCE: dropped {stats['dropped']} outlier member(s) below {core.OUTLIER_CUT}")
+    return mean, stats["n"], stats["self_mean"]
 
 
 def best_match(app, img, ref):
